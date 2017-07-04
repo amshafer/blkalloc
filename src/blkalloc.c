@@ -1,38 +1,179 @@
 /**
  * large block allocator - 2017 Austin Shafer
  *
+ * A memory pool that is (for the most part) a fixed block allocator
+ *
  * this allocates large blocks at one time
  * regular memory can be allocated with blkalloc( size_t size )
  * 
  */
 
-#ifndef BLKALLOC_H
-#define BLKALLOC_H
-
 #include <stdlib.h>
+#include <stdbool.h>
 
-//--------------------------------------------- constants 
+#include "blkalloc.h"
 
-// default size of the blocks
-#define BLOCK_SIZE 512
-// starting number of blocks
-#define BLOCK_NUM 5
+// struct for an smaller sub-block
+// for freed pointers in blklarge
+struct blksmall_tag {
+  size_t size;              // size of sub-block
+  void *base;               // base of sub-block
+  struct blksmall_tag *next;// next sub-block in LL
+};
 
-//--------------------------------------------- macro defintions
+typedef struct blksmall_tag blksmall;
 
-// OS specific alloc call
-#define BLK_ALLOC( size ) { malloc( (size) ) }
+// struct for a single block
+struct blklarge_tag {
+  int num_free;             // number of freed sub-blocks
+  size_t size;              // the size of the block
+  size_t next;              // the next location
+  size_t fmin;              // smallest freed sub-block
+  size_t fmax;              // largest freed sub-block
+  size_t fsize;             // the amount of freed space
+  void *base;               // the base of the block
+  blksmall *freed;          // freed sub-block root (LL)
+};
 
-// OS specific free call
-#define BLK_FREE( p ) { free( (p) ) }
+// the struct holding all large blocks
+struct blklist_tag {
+  unsigned int numb;        // number of blocks
+  blklarge **blockp;        // array of pointers to blocks
+};
 
-//--------------------------------------------- function prototypes
+// global block list
+blklist *blist;
 
-// structs used for holding 
-typedef struct blklist_tag blklist;
-typedef struct blklarge_tag blklarge;
+/*
+ * creates a sub-block to be allocated into
+ * @param s the size of the block
+ * @param f the position to be freed
+ * @return pointer to block struct (blklarge)
+ */
+blksmall *
+blksmall_init (size_t s, void *f)
+{
+  blksmall *sb = BLK_ALLOC(sizeof(blksmall));
+  sb->size = s;
+  sb->base = f;
+  sb->next = NULL;
+  return sb;
+}
 
-void * blkalloc (size_t size);
+/*
+ * creates a large block to be allocated into
+ * @param s the size of the block
+ * @return pointer to block struct (blklarge)
+ */
+blklarge *
+blklarge_init (size_t s)
+{
+  blklarge *b = BLK_ALLOC(sizeof(blklarge));
+  b->size = s;
+  b->next = 0;
+  b->base = BLK_ALLOC(sizeof(char) * s);
 
-//---------------------------------------------
-#endif
+  b->num_free = 0;
+  b->fmin = 0;
+  b->fmax = 0;
+  b->fsize = 0;
+  b->freed = NULL;
+  
+  return b;
+}
+
+/*
+ * creates the list of blocks in use
+ * only initializes the first block
+ *
+ */
+blklist *
+blklist_init ()
+{
+  blklist *bl = BLK_ALLOC(sizeof(blklist));
+  bl->numb = 1;
+  bl->blockp = BLK_ALLOC(sizeof(blklarge *) * BLOCK_NUM);
+
+  //allocate first block only
+  *bl->blockp = blklarge_init(BLOCK_SIZE);
+
+  return bl;
+}
+
+/*
+ * checks the freed pointers in all blocks to see 
+ * if there is a open spot that will fit this size
+ * if there is, return the address and remove it
+ * from freed list
+ * search the blocks LL for any open positions
+ * @param size the size of the requested allocation
+ * @return a pointer to sub-block with available space, or null if not found
+ */
+blksmall *
+find_free (size_t size)
+{
+  // make sure blist is valid
+  for(int i = 0; i < blist->numb; i++) {
+    if(size >= blist->blockp[i]->fmin && size <= blist->blockp[i]->fmax) {
+      // find best fit
+      blksmall *cur= blist->blockp[i]->freed;
+      if(cur->size >= size) {
+	// remove the bucket
+	blist->blockp[i]->freed = cur->next;
+	blist->blockp[i]->fsize -= cur->size;
+	blist->blockp[i]->fmin = cur->next->size;
+	return cur;
+      }
+      while(cur->next->size < size) {
+	if(cur->next->next) {
+	  cur = cur->next;
+	} else {
+	  return NULL;
+	}
+      }
+      // remove the bucket
+      blksmall *ret = cur->next;
+      if(cur->next->next) {
+	cur->next = cur->next->next;
+      } else {
+	cur->next = NULL;
+	blist->blockp[i]->fmax = cur->size;
+      }
+      blist->blockp[i]->fsize -= ret->size;
+      return ret;
+    }
+  }
+  return NULL;
+}
+
+/*
+ * the block allocation call
+ * a memory pool that is (for the most part) a
+ * fixed size block allocator
+ * 
+ * @param size the size of the allocated
+ * @return a pointer to the available memory in a block
+ */
+void *
+blkalloc (size_t size)
+{
+  // initialize if needed
+  if(!blist) {
+    blist = blklist_init();
+  }
+  
+  blksmall *found = find_free(size);
+  if(found) {
+    return found;
+  }
+
+  // find the current block
+  // calculate next available position
+  // increment next position
+  blklarge *cur_block = blist->blockp[blist->numb - 1];
+  void *addr = cur_block->base;
+  addr += cur_block->next;
+  cur_block->next += size;
+  
+  return addr;
+}

@@ -26,13 +26,41 @@
 // OS specific free call
 #define BLK_FREE( p ) free( (p) ) 
 
+#define MAGIC 179
+
 //--------------------------------------------- function prototypes
 
 // structs used for holding 
 typedef struct blklist_tag blklist;
 typedef struct blklarge_tag blklarge;
 
-void * blkalloc (size_t size);
+// max size of allocation
+typedef unsigned short size_b;
+
+/*
+ * the block allocation call
+ * a memory pool that is (for the most part) a
+ * fixed size block allocator
+ * 
+ * @param size the size of the allocated
+ * @return a pointer to the available memory in a block
+ */
+void * blkalloc (size_b size);
+
+/*
+ * the free allocated call
+ * used to free INDIVIDUAL allocations 
+ * NOT entire blocks
+ * @param the ptr to be freed
+ * @return if found
+ */
+int blkfree (void *ptr);
+
+/*
+ * frees all blocks and blist variable
+ * everything will be freed
+ */
+void blkfree_all ();
 
 //---------------------------------------------
 #endif

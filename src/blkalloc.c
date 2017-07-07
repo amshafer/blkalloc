@@ -16,7 +16,7 @@
 #include "blkalloc.h"
 
 typedef struct {
-  unsigned char magic;      // magic number
+  size_b magic;             // magic number
   size_b size;              // the size of the sub-block
 } blkhead;
   
@@ -135,10 +135,10 @@ blklist_addblock ()
 {
   if(blist->numb + 1 > blist->cap) {
     blist->cap *= 2;
-    realloc(blist->blockp, sizeof(blklist) * blist->cap);
+    blist->blockp = realloc(blist->blockp, sizeof(blklist) * blist->cap);
   }
-  blist->numb++;
   blist->blockp[blist->numb] = blklarge_init(BLOCK_SIZE);
+  blist->numb++;
 }
 
 /*
@@ -148,7 +148,7 @@ void
 blklist_free (blklist *bls)
 {
   for(int i = 0; i < bls->numb; i++) {
-    blklarge_free(bls->blockp[0]);
+    blklarge_free(bls->blockp[i]);
   }
   BLK_FREE(bls->blockp);
 }
@@ -239,7 +239,7 @@ blkalloc (size_b size)
 	//create new block if needed
 	blklist_addblock();
       }
-      cur_block++;
+      cur_block = blist->blockp[i];
     }
   }
 
@@ -293,30 +293,32 @@ blkfree (void *ptr)
     return -1;
   }
   // add ptr address to freed
-  blksmall *fptr = ptr - sizeof(blkhead);
-  blksmall_init(h->size, fptr);
-  if(!bl->freed || h->size < bl->freed->head.size) {
-    bl->fmin = h->size;
-    if(!bl->freed) {
-      bl->fmin = h->size / 2;
-      bl->fmax = h->size;
+  if(h->size >= sizeof(blksmall)) {
+    blksmall *fptr = (blksmall *)h;
+    blksmall_init(h->size, fptr);
+    if(!bl->freed || h->size < bl->freed->head.size) {
+      bl->fmin = h->size;
+      if(!bl->freed) {
+	bl->fmin = h->size / 2;
+	bl->fmax = h->size;
+      }
+      fptr->next = bl->freed;
+      bl->freed = fptr;
+    } else {
+      blksmall *cur = bl->freed;
+      while(cur->next != NULL && h->size > cur->next->head.size) {
+	cur = cur->next;
+      }
+      fptr->next = cur->next;
+      if(!fptr->next) {
+	bl->fmax = h->size;
+      }
+      cur->next = fptr;
     }
-    fptr->next = bl->freed;
-    bl->freed = fptr;
-  } else {
-    blksmall *cur = bl->freed;
-    while(cur->next != NULL && h->size > cur->next->head.size) {
-      cur = cur->next;
-    }
-    fptr->next = cur->next;
-    if(!fptr->next) {
-      bl->fmax = h->size;
-    }
-    cur->next = fptr;
+    
+    bl->fsize += h->size;
+    bl->num_free++;
   }
-
-  bl->fsize += h->size;
-  bl->num_free++;
   return 0;
 }
 

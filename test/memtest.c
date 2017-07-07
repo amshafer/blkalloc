@@ -37,16 +37,17 @@ test_count (int c)
     nums[i] = blkalloc(sizeof(int));
   }
 
-   for(int i = 0; i < c; i++) {
+  for(int i = 0; i < c; i++) {
     blkfree(nums[i]);
   }
+  printf("allocated and freed %d sub-blocks\n", c);
 }
 
 int
 main (int argc, char *argv[])
 {
   //basic_test();
-  test_count(200);
+  test_count(1000);
   
   blkfree_all();
   return 0;

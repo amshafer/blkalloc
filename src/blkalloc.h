@@ -26,7 +26,7 @@
 // OS specific free call
 #define BLK_FREE( p ) free( (p) ) 
 
-#define MAGIC 179
+#define MAGIC 45916
 
 //--------------------------------------------- function prototypes
 

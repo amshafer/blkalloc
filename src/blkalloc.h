@@ -14,7 +14,7 @@
 //--------------------------------------------- constants 
 
 // default size of the blocks
-#define BLOCK_SIZE 512
+#define BLOCK_SIZE 1024
 // starting number of blocks
 #define BLOCK_NUM 5
 

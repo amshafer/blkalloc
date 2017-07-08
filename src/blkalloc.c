@@ -273,6 +273,23 @@ find_owning_block (void *ptr)
 }
 
 /*
+ * adjusts blklarge next field to stop block fragmentation
+ * if freed spot is at the end then move next back
+ * @param bl the block
+ * @param h the header struct
+ */
+int
+last_allocated (blklarge *bl, blkhead *h)
+{
+  size_b h_size = h->size + sizeof(blkhead);
+  if((void *)h + h_size == bl->base + bl->next) {
+    bl->next -= h_size;
+    return 1;
+  }
+  return 0;
+}
+
+/*
  * the free allocated call
  * used to free INDIVIDUAL allocations 
  * NOT entire blocks
@@ -292,6 +309,13 @@ blkfree (void *ptr)
   if(!bl) {
     return -1;
   }
+
+  // if the next field of blklarge is immediatly after
+  // then just decrement next by size
+  if(last_allocated(bl, h)) {
+    return 0;
+  }
+  
   // add ptr address to freed
   if(h->size >= sizeof(blksmall)) {
     blksmall *fptr = (blksmall *)h;
@@ -329,5 +353,6 @@ blkfree (void *ptr)
 void
 blkfree_all ()
 {
-  blklist_free(blist);
+  if(blist)
+    blklist_free(blist);
 }

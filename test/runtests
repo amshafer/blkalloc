@@ -1,0 +1,21 @@
+#!/bin/sh
+
+BIN=memtest
+BINDIR=bin
+
+cmd () {
+    echo "running $@:"
+    "$@"
+}
+
+SUFFIX=""
+
+# if running on windows (cygwin)
+if [ "${CYGWIN}" == "" ] ; then
+   SUFFIX='.exe'
+fi
+
+# all tests to be run should be added here:
+
+cmd ${BINDIR}/${BIN}${SUFFIX}
+  

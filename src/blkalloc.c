@@ -12,6 +12,7 @@
 #include <stdbool.h>
 #include <string.h>
 #include <stdio.h>
+#include <sys/mman.h>
 
 #include "blkalloc.h"
 
@@ -87,7 +88,7 @@ blklarge_init (size_b s)
   blklarge *b = BLK_ALLOC(sizeof(blklarge));
   b->size = s;
   b->next = 0;
-  b->base = BLK_ALLOC(sizeof(char) * s);
+  b->base = mmap(0, s, PROT_READ|PROT_WRITE|PROT_EXEC, MAP_ANON|MAP_PRIVATE, -1, 0);
 
   b->num_free = 0;
   b->fmin = 0;
@@ -104,7 +105,7 @@ blklarge_init (size_b s)
 void
 blklarge_free (blklarge *bl)
 {
-  BLK_FREE(bl->base);
+  munmap(bl->base, bl->size);
 }
   
 /*
@@ -163,49 +164,42 @@ blklist_free (blklist *bls)
  * @return a pointer to sub-block with available space, or null if not found
  */
 blksmall *
-find_free (size_b size)
+find_free (blklarge *bl, size_b size)
 {
   // make sure blist is valid
-  blklarge *bl = *blist->blockp;
-  for(int i = 0; i < blist->numb; i++) {
-    if(size >= bl->fmin && size <= bl->fmax) {
-      // find best fit
-      blksmall *cur= bl->freed;
-      if(cur->head.size >= size) {
-	// remove the bucket
-	bl->freed = cur->next;
-	bl->fsize -= cur->head.size + sizeof(blkhead);
-	if(!cur->next) {
-	  bl->fmin = 0;
-	  bl->fmax = 0;
-	} else {
-	  bl->fmin = cur->next->head.size;
-	}
-	bl->num_free--;
-	return cur;
-      }
-      while(cur->next->head.size < size) {
-	if(cur->next->next) {
-	  cur = cur->next;
-	} else {
-	  return NULL;
-	}
-      }
-      // remove the bucket
-      blksmall *ret = cur->next;
-      if(cur->next->next) {
-	cur->next = cur->next->next;
-      } else {
-	cur->next = NULL;
-	bl->fmax = cur->head.size;
-      }
-      bl->num_free--;
-      bl->fsize -= ret->head.size;
-      return ret;
+  // find best fit
+  blksmall *cur= bl->freed;
+  if(cur->head.size >= size) {
+    // remove the bucket
+    bl->freed = cur->next;
+    bl->fsize -= cur->head.size + sizeof(blkhead);
+    if(!cur->next) {
+      bl->fmin = 0;
+      bl->fmax = 0;
+    } else {
+      bl->fmin = cur->next->head.size;
     }
-    bl++;
+    bl->num_free--;
+    return cur;
   }
-  return NULL;
+  while(cur->next->head.size < size) {
+    if(cur->next->next) {
+      cur = cur->next;
+    } else {
+      return NULL;
+    }
+  }
+  // remove the bucket
+  blksmall *ret = cur->next;
+  if(cur->next->next) {
+    cur->next = cur->next->next;
+  } else {
+    cur->next = NULL;
+    bl->fmax = cur->head.size;
+  }
+  bl->num_free--;
+  bl->fsize -= ret->head.size;
+  return ret;
 }
 
 /*
@@ -223,17 +217,16 @@ blkalloc (size_b size)
   if(!blist) {
     blist = blklist_init();
   }
-  
-  blksmall *found = find_free(size);
-  if(found) {
-    blkhead *h = (blkhead *)found;
-    // h + size of blkhead 
-    return h + 1;
-  }
 
   // find the current block
   blklarge *cur_block = blist->blockp[0];
   for(int i = 0; i <= blist->numb; i++) {
+    if(size >= cur_block->fmin && size <= cur_block->fmax) {
+      blkhead *h = (blkhead *)find_free(cur_block, size);
+      // h + size of blkhead 
+      return h + 1;
+    }
+
     if(cur_block->next + size + sizeof(blkhead) > cur_block->size) {
       if(i == blist->numb) {
 	//create new block if needed

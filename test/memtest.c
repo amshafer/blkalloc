@@ -51,7 +51,7 @@ int
 main (int argc, char *argv[])
 {
   basic_test();
-  test_count(1000);
+  test_count(1000000);
   test_count(10);
   
   blkfree_all();

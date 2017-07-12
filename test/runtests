@@ -11,7 +11,7 @@ cmd () {
 SUFFIX=""
 
 # if running on windows (cygwin)
-if [ "${CYGWIN}" == "" ] ; then
+if [ "${CYGWIN}" != "" ] ; then
    SUFFIX='.exe'
 fi
 

@@ -14,7 +14,7 @@
 //--------------------------------------------- constants 
 
 // default size of the blocks
-#define BLOCK_SIZE 1024
+#define BLOCK_SIZE 131072
 // starting number of blocks
 #define BLOCK_NUM 5
 
@@ -36,7 +36,7 @@ typedef struct blklist_tag blklist;
 typedef struct blklarge_tag blklarge;
 
 // max size of allocation
-typedef unsigned short size_b;
+typedef unsigned int size_b;
 
 /*
  * the block allocation call

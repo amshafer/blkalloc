@@ -47,12 +47,62 @@ test_count (int c)
   printf("allocated and freed %d sub-blocks\n", c);
 }
 
+void
+gen_rand (char *name, int n, int s)
+{
+  FILE *fp = fopen(name, "w");
+  fprintf(fp, "%d %d\n", n, s);
+  char *on[s];
+  for(int i = 0; i < n; i++) {
+    int slot = rand() % s;
+    if(on[slot]) {
+      fprintf(fp, "f %d\n", slot);
+      on[slot] = NULL;
+    } else {
+      int size = rand() % (BLOCK_SIZE / 2 - 4) + 4;
+      fprintf(fp, "a %d %d\n", slot, size);
+    }
+  }
+
+  for(int top = 0; top < s; top++) {
+    if(on[top]) {
+       fprintf(fp, "f %d\n", top);
+    }
+  }
+}
+
+void
+test_rand (char *name)
+{
+  FILE *fp = fopen(name, "r");
+  int n, s = 0;
+  char *on[s];
+  fscanf(fp, "%d %d", &n, &s);
+
+  for(int i = 0; i < n; i++) {
+    char c = fgetc(fp);
+    if(c == 'a') {
+      int slot, size = 0;
+      fscanf(fp, "%d %d", &slot, &size);
+      on[slot] = ALLOCATOR(size);
+    } else if(c == 'f') {
+      int slot = 0;
+      fscanf(fp, "%d", &slot);
+      FREE(on[slot]);
+    }
+  }
+}
+
 int
 main (int argc, char *argv[])
 {
   basic_test();
   test_count(1000);
   test_count(10);
+
+  char name[] = "test/r01.in";
+  //gen_rand(name, 100, 50);
+  test_rand(name);
   
   blkfree_all();
   return 0;

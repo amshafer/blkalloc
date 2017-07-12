@@ -15,6 +15,12 @@
 
 #include "blkalloc.h"
 
+/*
+ * data header for allocations. holds the size
+ * of the individual allocation
+ * magic will be MAGIC if allocated or FREE_MAGIC
+ * if freed
+ */
 typedef struct {
   size_b magic;             // magic number
   size_b size;              // the size of the sub-block
@@ -29,7 +35,12 @@ struct blksmall_tag {
 
 typedef struct blksmall_tag blksmall;
 
-// struct for a single block
+/*
+ * struct for a single block
+ * this holds a linked list of freed sub blocks which
+ * are used if the allocated amount n 
+ * satisfies : fmin < n < fmax
+ */
 struct blklarge_tag {
   int num_free;             // number of freed sub-blocks
   size_b size;              // the size of the block
@@ -41,7 +52,11 @@ struct blklarge_tag {
   blksmall *freed;          // freed sub-block root (LL)
 };
 
-// the struct holding all large blocks
+/*
+ * the struct holding all large blocks
+ * these large blocks (blklarge) will be partitioned 
+ * into sub-blocks
+ */
 struct blklist_tag {
   unsigned int numb;        // number of blocks
   unsigned int cap;         // block capacity
@@ -227,6 +242,7 @@ blkalloc (size_b size)
   blksmall *found = find_free(size);
   if(found) {
     blkhead *h = (blkhead *)found;
+    blkhead_init(h, found->head.size);
     // h + size of blkhead 
     return h + 1;
   }
@@ -320,6 +336,7 @@ blkfree (void *ptr)
   if(h->size >= sizeof(blksmall)) {
     blksmall *fptr = (blksmall *)h;
     blksmall_init(h->size, fptr);
+    fptr->head.magic = FREE_MAGIC;
     if(!bl->freed || h->size < bl->freed->head.size) {
       bl->fmin = h->size;
       if(!bl->freed) {

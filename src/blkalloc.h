@@ -27,6 +27,7 @@
 #define BLK_FREE( p ) free( (p) ) 
 
 #define MAGIC 45916
+#define FREE_MAGIC 45917
 
 //--------------------------------------------- function prototypes
 

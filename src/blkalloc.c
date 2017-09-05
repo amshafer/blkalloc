@@ -23,15 +23,15 @@
  * if freed
  */
 typedef struct {
-  size_b magic;             // magic number
-  size_b size;              // the size of the sub-block
+  size_b bh_magic;             // magic number
+  size_b bh_size;              // the size of the sub-block
 } blkhead;
   
 // struct for an smaller sub-block
 // for freed pointers in blklarge
 struct blksmall_tag {
-  blkhead head;             // the sub-block info
-  struct blksmall_tag *next;// next sub-block in LL
+  blkhead bs_head;             // the sub-block info
+  struct blksmall_tag *bs_next;// next sub-block in LL
 };
 
 typedef struct blksmall_tag blksmall;
@@ -43,14 +43,14 @@ typedef struct blksmall_tag blksmall;
  * satisfies : fmin < n < fmax
  */
 struct blklarge_tag {
-  int num_free;             // number of freed sub-blocks
-  size_b size;              // the size of the block
-  size_b next;              // the next location
-  size_b fmin;              // smallest freed sub-block
-  size_b fmax;              // largest freed sub-block
-  size_b fsize;             // the amount of freed space
-  void *base;               // the base of the block
-  blksmall *freed;          // freed sub-block root (LL)
+  int bl_num_free;             // number of freed sub-blocks
+  size_b bl_size;              // the size of the block
+  size_b bl_next;              // the next location
+  size_b bl_fmin;              // smallest freed sub-block
+  size_b bl_fmax;              // largest freed sub-block
+  size_b bl_fsize;             // the amount of freed space
+  void *bl_base;               // the base of the block
+  blksmall *bl_freed;          // freed sub-block root (LL)
 };
 
 /*
@@ -59,9 +59,9 @@ struct blklarge_tag {
  * into sub-blocks
  */
 struct blklist_tag {
-  unsigned int numb;        // number of blocks
-  unsigned int cap;         // block capacity
-  blklarge **blockp;        // array of pointers to blocks
+  unsigned int b_numb;        // number of blocks
+  unsigned int b_cap;         // block capacity
+  blklarge **b_blockp;        // array of pointers to blocks
 };
 
 // global block list
@@ -75,8 +75,8 @@ blklist *blist;
 void
 blkhead_init (blkhead *bh, size_b s)
 {
-  bh->magic = MAGIC;
-  bh->size = s;
+  bh->bh_magic = MAGIC;
+  bh->bh_size = s;
 }
 
 /*
@@ -88,8 +88,8 @@ void
 blksmall_init (size_b s, void *f)
 {
   blksmall *bs = (blksmall *)f;
-  blkhead_init(&bs->head, (size_b)s);
-  bs->next = NULL;
+  blkhead_init(&bs->bs_head, (size_b)s);
+  bs->bs_next = NULL;
 }
 
 /*
@@ -101,15 +101,15 @@ blklarge *
 blklarge_init (size_b s)
 {
   blklarge *b = BLK_ALLOC(sizeof(blklarge));
-  b->size = s;
-  b->next = 0;
-  b->base = mmap(0, s, PROT_READ|PROT_WRITE|PROT_EXEC, MAP_ANON|MAP_PRIVATE, -1, 0);
+  b->bl_size = s;
+  b->bl_next = 0;
+  b->bl_base = mmap(0, s, PROT_READ|PROT_WRITE|PROT_EXEC, MAP_ANON|MAP_PRIVATE, -1, 0);
 
-  b->num_free = 0;
-  b->fmin = 0;
-  b->fmax = 0;
-  b->fsize = 0;
-  b->freed = NULL;
+  b->bl_num_free = 0;
+  b->bl_fmin = 0;
+  b->bl_fmax = 0;
+  b->bl_fsize = 0;
+  b->bl_freed = NULL;
   
   return b;
 }
@@ -120,7 +120,7 @@ blklarge_init (size_b s)
 void
 blklarge_free (blklarge *bl)
 {
-  munmap(bl->base, bl->size);
+  munmap(bl->bl_base, bl->bl_size);
 }
   
 /*
@@ -132,12 +132,12 @@ blklist *
 blklist_init ()
 {
   blklist *bl = BLK_ALLOC(sizeof(blklist));
-  bl->numb = 1;
-  bl->cap = BLOCK_NUM;
-  bl->blockp = BLK_ALLOC(sizeof(blklarge *) * BLOCK_NUM);
+  bl->b_numb = 1;
+  bl->b_cap = BLOCK_NUM;
+  bl->b_blockp = BLK_ALLOC(sizeof(blklarge *) * BLOCK_NUM);
 
   //allocate first block only
-  *bl->blockp = blklarge_init(BLOCK_SIZE);
+  *bl->b_blockp = blklarge_init(BLOCK_SIZE);
 
   return bl;
 }
@@ -149,12 +149,12 @@ blklist_init ()
 void
 blklist_addblock ()
 {
-  if(blist->numb + 1 > blist->cap) {
-    blist->cap *= 2;
-    blist->blockp = realloc(blist->blockp, sizeof(blklist) * blist->cap);
+  if(blist->b_numb + 1 > blist->b_cap) {
+    blist->b_cap *= 2;
+    blist->b_blockp = realloc(blist->b_blockp, sizeof(blklist) * blist->b_cap);
   }
-  blist->blockp[blist->numb] = blklarge_init(BLOCK_SIZE);
-  blist->numb++;
+  blist->b_blockp[blist->b_numb] = blklarge_init(BLOCK_SIZE);
+  blist->b_numb++;
 }
 
 /*
@@ -163,10 +163,10 @@ blklist_addblock ()
 void
 blklist_free (blklist *bls)
 {
-  for(int i = 0; i < bls->numb; i++) {
-    blklarge_free(bls->blockp[i]);
+  for(int i = 0; i < bls->b_numb; i++) {
+    blklarge_free(bls->b_blockp[i]);
   }
-  BLK_FREE(bls->blockp);
+  BLK_FREE(bls->b_blockp);
 }
 
 /*
@@ -183,37 +183,37 @@ find_free (blklarge *bl, size_b size)
 {
   // make sure blist is valid
   // find best fit
-  blksmall *cur= bl->freed;
-  if(cur->head.size >= size) {
+  blksmall *cur= bl->bl_freed;
+  if(cur->bs_head.bh_size >= size) {
     // remove the bucket
-    bl->freed = cur->next;
-    bl->fsize -= cur->head.size + sizeof(blkhead);
-    if(!cur->next) {
-      bl->fmin = 0;
-      bl->fmax = 0;
+    bl->bl_freed = cur->bs_next;
+    bl->bl_fsize -= cur->bs_head.bh_size + sizeof(blkhead);
+    if(!cur->bs_next) {
+      bl->bl_fmin = 0;
+      bl->bl_fmax = 0;
     } else {
-      bl->fmin = cur->next->head.size;
+      bl->bl_fmin = cur->bs_next->bs_head.bh_size;
     }
-    bl->num_free--;
+    bl->bl_num_free--;
     return cur;
   }
-  while(cur->next->head.size < size) {
-    if(cur->next->next) {
-      cur = cur->next;
+  while(cur->bs_next->bs_head.bh_size < size) {
+    if(cur->bs_next->bs_next) {
+      cur = cur->bs_next;
     } else {
       return NULL;
     }
   }
   // remove the bucket
-  blksmall *ret = cur->next;
-  if(cur->next->next) {
-    cur->next = cur->next->next;
+  blksmall *ret = cur->bs_next;
+  if(cur->bs_next->bs_next) {
+    cur->bs_next = cur->bs_next->bs_next;
   } else {
-    cur->next = NULL;
-    bl->fmax = cur->head.size;
+    cur->bs_next = NULL;
+    bl->bl_fmax = cur->bs_head.bh_size;
   }
-  bl->num_free--;
-  bl->fsize -= ret->head.size;
+  bl->bl_num_free--;
+  bl->bl_fsize -= ret->bs_head.bh_size;
   return ret;
 }
 
@@ -234,29 +234,29 @@ blkalloc (size_b size)
   }
 
   // find the current block
-  blklarge *cur_block = blist->blockp[0];
-  for(int i = 0; i <= blist->numb; i++) {
-    if(size >= cur_block->fmin && size <= cur_block->fmax) {
+  blklarge *cur_block = blist->b_blockp[0];
+  for(int i = 0; i <= blist->b_numb; i++) {
+    if(size >= cur_block->bl_fmin && size <= cur_block->bl_fmax) {
       blkhead *h = (blkhead *)find_free(cur_block, size);
       // h + size of blkhead 
       return h + 1;
     }
 
-    if(cur_block->next + size + sizeof(blkhead) > cur_block->size) {
-      if(i == blist->numb) {
+    if(cur_block->bl_next + size + sizeof(blkhead) > cur_block->bl_size) {
+      if(i == blist->b_numb) {
 	//create new block if needed
 	blklist_addblock();
       }
-      cur_block = blist->blockp[i];
+      cur_block = blist->b_blockp[i];
     }
   }
 
   // calculate next available position
   // increment next position
-  void *addr = cur_block->base;
-  addr += cur_block->next;
+  void *addr = cur_block->bl_base;
+  addr += cur_block->bl_next;
   blkhead_init(addr, size);
-  cur_block->next += size + sizeof(blkhead);
+  cur_block->bl_next += size + sizeof(blkhead);
   
   return addr + sizeof(blkhead);
 }
@@ -270,9 +270,9 @@ blklarge *
 find_owning_block (void *ptr)
 {
   // figure out what block ptr is in
-  blklarge *bl = *blist->blockp;
-  for(int i = 0; i < blist->numb; i++) {
-    if(ptr >= bl->base && ptr < (bl->base + bl->size)) {
+  blklarge *bl = *blist->b_blockp;
+  for(int i = 0; i < blist->b_numb; i++) {
+    if(ptr >= bl->bl_base && ptr < (bl->bl_base + bl->bl_size)) {
       return bl;
     }
     bl++;
@@ -289,9 +289,9 @@ find_owning_block (void *ptr)
 int
 last_allocated (blklarge *bl, blkhead *h)
 {
-  size_b h_size = h->size + sizeof(blkhead);
-  if((void *)h + h_size == bl->base + bl->next) {
-    bl->next -= h_size;
+  size_b h_size = h->bh_size + sizeof(blkhead);
+  if((void *)h + h_size == bl->bl_base + bl->bl_next) {
+    bl->bl_next -= h_size;
     return 1;
   }
   return 0;
@@ -309,7 +309,7 @@ blkfree (void *ptr)
 {
   // look up ptr size
   blkhead *h = ptr - sizeof(blkhead);
-  if(h->magic != MAGIC) {
+  if(h->bh_magic != MAGIC) {
     fprintf(stderr, "memory boundaries corrupted\n");
     return -1;
   }
@@ -325,32 +325,32 @@ blkfree (void *ptr)
   }
   
   // add ptr address to freed
-  if(h->size >= sizeof(blksmall)) {
+  if(h->bh_size >= sizeof(blksmall)) {
     blksmall *fptr = (blksmall *)h;
-    blksmall_init(h->size, fptr);
-    fptr->head.magic = FREE_MAGIC;
-    if(!bl->freed || h->size < bl->freed->head.size) {
-      bl->fmin = h->size;
-      if(!bl->freed) {
-	bl->fmin = h->size / 2;
-	bl->fmax = h->size;
+    blksmall_init(h->bh_size, fptr);
+    fptr->bs_head.bh_magic = FREE_MAGIC;
+    if(!bl->bl_freed || h->bh_size < bl->bl_freed->bs_head.bh_size) {
+      bl->bl_fmin = h->bh_size;
+      if(!bl->bl_freed) {
+	bl->bl_fmin = h->bh_size / 2;
+	bl->bl_fmax = h->bh_size;
       }
-      fptr->next = bl->freed;
-      bl->freed = fptr;
+      fptr->bs_next = bl->bl_freed;
+      bl->bl_freed = fptr;
     } else {
-      blksmall *cur = bl->freed;
-      while(cur->next != NULL && h->size > cur->next->head.size) {
-	cur = cur->next;
+      blksmall *cur = bl->bl_freed;
+      while(cur->bs_next != NULL && h->bh_size > cur->bs_next->bs_head.bh_size) {
+	cur = cur->bs_next;
       }
-      fptr->next = cur->next;
-      if(!fptr->next) {
-	bl->fmax = h->size;
+      fptr->bs_next = cur->bs_next;
+      if(!fptr->bs_next) {
+	bl->bl_fmax = h->bh_size;
       }
-      cur->next = fptr;
+      cur->bs_next = fptr;
     }
     
-    bl->fsize += h->size;
-    bl->num_free++;
+    bl->bl_fsize += h->bh_size;
+    bl->bl_num_free++;
   }
   return 0;
 }

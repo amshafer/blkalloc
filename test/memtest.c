@@ -36,7 +36,8 @@ basic_test ()
 void
 test_count (int c)
 {
-  char *nums[c];
+  char **nums;
+  nums = ALLOCATOR(sizeof(char *) * c);
   for(int i = 0; i < c; i++) {
     nums[i] = ALLOCATOR(sizeof(char) + 15);
   }

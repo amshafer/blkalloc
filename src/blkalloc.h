@@ -16,7 +16,13 @@
 // default size of the blocks
 #define BLOCK_SIZE 131072
 // starting number of blocks
-#define BLOCK_NUM 5
+#define BLOCK_NUM 1
+// min block size
+#define BLOCK_MIN 16
+
+// magic for header identification
+#define MAGIC 45916
+#define FREE_MAGIC 45917
 
 //--------------------------------------------- macro defintions
 
@@ -26,14 +32,11 @@
 // OS specific free call
 #define BLK_FREE( p ) free( (p) ) 
 
-#define MAGIC 45916
-#define FREE_MAGIC 45917
-
 //--------------------------------------------- function prototypes
 
 // structs used for holding 
-typedef struct blklist_tag blklist;
-typedef struct blklarge_tag blklarge;
+typedef struct blklist_tag blklist_t;
+
 
 // max size of allocation
 typedef unsigned int size_b;

@@ -98,12 +98,12 @@ int
 main (int argc, char *argv[])
 {
   basic_test();
-  test_count(1000000);
-  test_count(10);
+  test_count(5000);
+  //test_count(10);
 
-  char name[] = "test/r01.in";
+  //char name[] = "test/r01.in";
   //gen_rand(name, 100, 50);
-  test_rand(name);
+  //test_rand(name);
   
   blkfree_all();
   return 0;

@@ -25,33 +25,17 @@
 typedef struct {
   size_b bh_magic;             // magic number
   size_b bh_size;              // the size of the sub-block
-} blkhead;
+} blkhead_t;
   
 // struct for an smaller sub-block
 // for freed pointers in blklarge
 struct blksmall_tag {
-  blkhead bs_head;             // the sub-block info
-  struct blksmall_tag *bs_next;// next sub-block in LL
+  blkhead_t *bs_head;             // the sub-block info
+  struct blksmall_tag *bs_next;  // next sub-block in LL
 };
 
-typedef struct blksmall_tag blksmall;
+typedef struct blksmall_tag blksmall_t;
 
-/*
- * struct for a single block
- * this holds a linked list of freed sub blocks which
- * are used if the allocated amount n 
- * satisfies : fmin < n < fmax
- */
-struct blklarge_tag {
-  int bl_num_free;             // number of freed sub-blocks
-  size_b bl_size;              // the size of the block
-  size_b bl_next;              // the next location
-  size_b bl_fmin;              // smallest freed sub-block
-  size_b bl_fmax;              // largest freed sub-block
-  size_b bl_fsize;             // the amount of freed space
-  void *bl_base;               // the base of the block
-  blksmall *bl_freed;          // freed sub-block root (LL)
-};
 
 /*
  * the struct holding all large blocks
@@ -59,13 +43,15 @@ struct blklarge_tag {
  * into sub-blocks
  */
 struct blklist_tag {
+  unsigned int b_numh;        // number of holes
   unsigned int b_numb;        // number of blocks
-  unsigned int b_cap;         // block capacity
-  blklarge **b_blockp;        // array of pointers to blocks
+  blksmall_t *b_holes;        // free blocks linked list
+  void **b_blocks;            // freeable unsplit blocks
+  blksmall_t *b_zombies;      // empty blksmall object storage
 };
 
 // global block list
-blklist *blist;
+blklist_t *blist;
 
 /*
  * creates the block header
@@ -73,7 +59,7 @@ blklist *blist;
  * @param the size of the block
  */
 void
-blkhead_init (blkhead *bh, size_b s)
+blkhead_init (blkhead_t *bh, size_b s)
 {
   bh->bh_magic = MAGIC;
   bh->bh_size = s;
@@ -84,60 +70,132 @@ blkhead_init (blkhead *bh, size_b s)
  * @param s the size of the block
  * @param f the position to be freed
  */
-void
-blksmall_init (size_b s, void *f)
+blksmall_t *
+blksmall_init (size_b s, blksmall_t *next)
 {
-  blksmall *bs = (blksmall *)f;
-  blkhead_init(&bs->bs_head, (size_b)s);
-  bs->bs_next = NULL;
+  blksmall_t *bs = BLK_ALLOC(sizeof(blksmall_t));
+
+  if (s != 0) {
+    bs->bs_head = BLK_ALLOC(sizeof(blkhead_t) + BLOCK_SIZE);
+    blkhead_init(bs->bs_head, s);
+  } else {
+    bs->bs_head = NULL;
+  }
+  
+  bs->bs_next = next;
+
+  return bs;
 }
 
 /*
- * creates a large block to be allocated into
- * @param s the size of the block
- * @return pointer to block struct (blklarge)
+ * frees a blksmall struct
+ * @param bs the struct to free
  */
-blklarge *
-blklarge_init (size_b s)
+void
+blksmall_free (blksmall_t *bs)
 {
-  blklarge *b = BLK_ALLOC(sizeof(blklarge));
-  b->bl_size = s;
-  b->bl_next = 0;
-  b->bl_base = mmap(0, s, PROT_READ|PROT_WRITE|PROT_EXEC, MAP_ANON|MAP_PRIVATE, -1, 0);
-
-  b->bl_num_free = 0;
-  b->bl_fmin = 0;
-  b->bl_fmax = 0;
-  b->bl_fsize = 0;
-  b->bl_freed = NULL;
-  
-  return b;
+  BLK_FREE(bs->bs_head);
+  BLK_FREE(bs);
 }
 
 /*
- * frees the blklarge struct
+ * creates a sub-block free representation
+ * @param head pointer to the head data to use
+ * @param next the next block in the list
+ * @return a blksmall off of the zombie pile
+ */
+blksmall_t *
+blksmall_refurbish (blkhead_t *head, blksmall_t *next)
+{
+  // get a free small block struct
+  blksmall_t *ret = blist->b_zombies;
+  blist->b_zombies = ret->bs_next;
+
+  ret->bs_head = head;
+  ret->bs_next = next;
+
+  return ret;
+}
+
+/*
+ * cuts blksmall into the right size
+ * if the hole is larger than the size, then
+ * break it into two small blocks, placing the new
+ * one at the front of the list
+ * 
+ * @param bs the block to break
+ * @param size the size of the requested allocation
  */
 void
-blklarge_free (blklarge *bl)
+blksmall_break (blksmall_t *bs, size_b size)
 {
-  munmap(bl->bl_base, bl->bl_size);
+  if (bs->bs_head->bh_size - size <= BLOCK_MIN) {
+    return;
+  }
+
+  // create new block header
+  void *new_block = (void *)bs->bs_head + sizeof(blkhead_t) + size;
+  blkhead_t *h = (blkhead_t *)new_block;
+  blkhead_init(h, bs->bs_head->bh_size - sizeof(blkhead_t) - size);
+
+  // create new holen
+  blksmall_t *new = blksmall_init(0, blist->b_holes);
+  new->bs_head = h;
+  blist->b_holes = new;
+
+  // fix old hole size
+  bs->bs_head->bh_size = size;
+
+  blist->b_numh++;
 }
-  
+
+
+/*
+ * Used to clean up the blksmall struct from the list when
+ * a block is returned to the user.
+ ***** DOES NOT handle bs_next entries. YOU must do that yourself
+ * @param bs the small struct to operate on
+ * @return a pointer to the allocated data
+ */
+void *
+blksmall_get_base (blksmall_t *bs, size_b size)
+{
+  void *ret = bs->bs_head;
+  blksmall_break(bs, size);
+
+  // add to pile of zombies
+  bs->bs_next = blist->b_zombies;
+  blist->b_zombies = bs;
+
+  return ret + sizeof(blkhead_t);
+}
+
 /*
  * creates the list of blocks in use
  * only initializes the first block
  *
  */
-blklist *
+blklist_t *
 blklist_init ()
 {
-  blklist *bl = BLK_ALLOC(sizeof(blklist));
-  bl->b_numb = 1;
-  bl->b_cap = BLOCK_NUM;
-  bl->b_blockp = BLK_ALLOC(sizeof(blklarge *) * BLOCK_NUM);
+  blklist_t *bl = BLK_ALLOC(sizeof(blklist_t));
 
-  //allocate first block only
-  *bl->b_blockp = blklarge_init(BLOCK_SIZE);
+  // create all starting blocks
+  bl->b_numh = BLOCK_NUM;
+  bl->b_numb = BLOCK_NUM;
+  bl->b_holes = blksmall_init(BLOCK_SIZE, NULL);
+  bl->b_zombies = NULL;
+
+  // blocks holds malloc'd blocks
+  bl->b_blocks = BLK_ALLOC(sizeof(void *) * BLOCK_NUM);
+  bl->b_blocks[0] = (void *)(bl->b_holes->bs_head);
+  
+  blksmall_t *cur = bl->b_holes;
+  for (int i = 1; i < BLOCK_NUM; i++) {
+    cur->bs_next = blksmall_init(BLOCK_SIZE, NULL);
+    cur = cur->bs_next;
+    bl->b_blocks[i] = (void *)cur->bs_next->bs_head;
+  }
 
   return bl;
 }
@@ -147,75 +205,27 @@ blklist_init ()
  * resizes the blockp array if needed
  */
 void
-blklist_addblock ()
+blklist_addblock (blklist_t *bl)
 {
-  if(blist->b_numb + 1 > blist->b_cap) {
-    blist->b_cap *= 2;
-    blist->b_blockp = realloc(blist->b_blockp, sizeof(blklist) * blist->b_cap);
-  }
-  blist->b_blockp[blist->b_numb] = blklarge_init(BLOCK_SIZE);
-  blist->b_numb++;
+  blksmall_t *new = blksmall_init(BLOCK_SIZE, bl->b_holes);
+  bl->b_holes = new;
 }
 
 /*
  * frees a blklist struct
+ * @param bls the list to free
+ * @return void
  */
 void
-blklist_free (blklist *bls)
+blklist_free (blklist_t *bls)
 {
   for(int i = 0; i < bls->b_numb; i++) {
-    blklarge_free(bls->b_blockp[i]);
+    free(blist->b_blocks[i]);
   }
-  BLK_FREE(bls->b_blockp);
+  BLK_FREE(bls->b_holes);
+  BLK_FREE(bls->b_blocks);
 }
 
-/*
- * checks the freed pointers in all blocks to see 
- * if there is a open spot that will fit this size
- * if there is, return the address and remove it
- * from freed list
- * search the blocks LL for any open positions
- * @param size the size of the requested allocation
- * @return a pointer to sub-block with available space, or null if not found
- */
-blksmall *
-find_free (blklarge *bl, size_b size)
-{
-  // make sure blist is valid
-  // find best fit
-  blksmall *cur= bl->bl_freed;
-  if(cur->bs_head.bh_size >= size) {
-    // remove the bucket
-    bl->bl_freed = cur->bs_next;
-    bl->bl_fsize -= cur->bs_head.bh_size + sizeof(blkhead);
-    if(!cur->bs_next) {
-      bl->bl_fmin = 0;
-      bl->bl_fmax = 0;
-    } else {
-      bl->bl_fmin = cur->bs_next->bs_head.bh_size;
-    }
-    bl->bl_num_free--;
-    return cur;
-  }
-  while(cur->bs_next->bs_head.bh_size < size) {
-    if(cur->bs_next->bs_next) {
-      cur = cur->bs_next;
-    } else {
-      return NULL;
-    }
-  }
-  // remove the bucket
-  blksmall *ret = cur->bs_next;
-  if(cur->bs_next->bs_next) {
-    cur->bs_next = cur->bs_next->bs_next;
-  } else {
-    cur->bs_next = NULL;
-    bl->bl_fmax = cur->bs_head.bh_size;
-  }
-  bl->bl_num_free--;
-  bl->bl_fsize -= ret->bs_head.bh_size;
-  return ret;
-}
 
 /*
  * the block allocation call
@@ -228,74 +238,41 @@ find_free (blklarge *bl, size_b size)
 void *
 blkalloc (size_b size)
 {
-  // initilize if needed
-  if(!blist) {
+  // initilize if neededp
+  if (!blist) {
     blist = blklist_init();
   }
 
-  // find the current block
-  blklarge *cur_block = blist->b_blockp[0];
-  for(int i = 0; i <= blist->b_numb; i++) {
-    if(size >= cur_block->bl_fmin && size <= cur_block->bl_fmax) {
-      blkhead *h = (blkhead *)find_free(cur_block, size);
-      // h + size of blkhead 
-      return h + 1;
-    }
-
-    if(cur_block->bl_next + size + sizeof(blkhead) > cur_block->bl_size) {
-      if(i == blist->b_numb) {
-	//create new block if needed
-	blklist_addblock();
-      }
-      cur_block = blist->b_blockp[i];
-    }
+  // if larger than block size just mmap it
+  if (size >= BLOCK_SIZE + sizeof(blkhead_t)) {
+    return BLK_ALLOC(size);
   }
-
-  // calculate next available position
-  // increment next position
-  void *addr = cur_block->bl_base;
-  addr += cur_block->bl_next;
-  blkhead_init(addr, size);
-  cur_block->bl_next += size + sizeof(blkhead);
   
-  return addr + sizeof(blkhead);
-}
+  // search for first block available
+  blksmall_t *bs = blist->b_holes;
+  if (bs->bs_head->bh_size > size) {
+    blist->b_holes = bs->bs_next;
+    blist->b_numh--;
+    return blksmall_get_base(bs, size);
+  }
 
-/*
- * finds the block that the pointer belongs to
- * @param ptr the pointer in question
- * @return a pointer to the owning block
- */
-blklarge *
-find_owning_block (void *ptr)
-{
-  // figure out what block ptr is in
-  blklarge *bl = *blist->b_blockp;
-  for(int i = 0; i < blist->b_numb; i++) {
-    if(ptr >= bl->bl_base && ptr < (bl->bl_base + bl->bl_size)) {
-      return bl;
+  while (bs->bs_next) { 
+    if (bs->bs_next->bs_head->bh_size > size) {
+      blksmall_t *ret = bs->bs_next;
+      bs->bs_next = ret->bs_next;
+      blist->b_numh--;
+      return blksmall_get_base(ret, size);
     }
-    bl++;
+    
+    bs = bs->bs_next;
   }
-  return NULL;
+
+  // make new block if needed
+  blklist_addblock(blist);
+  // new block is first in list so break it if needed
+  return blksmall_get_base(blist->b_holes, size);
 }
 
-/*
- * adjusts blklarge next field to stop block fragmentation
- * if freed spot is at the end then move next back
- * @param bl the block
- * @param h the header struct
- */
-int
-last_allocated (blklarge *bl, blkhead *h)
-{
-  size_b h_size = h->bh_size + sizeof(blkhead);
-  if((void *)h + h_size == bl->bl_base + bl->bl_next) {
-    bl->bl_next -= h_size;
-    return 1;
-  }
-  return 0;
-}
 
 /*
  * the free allocated call
@@ -307,51 +284,23 @@ last_allocated (blklarge *bl, blkhead *h)
 int
 blkfree (void *ptr)
 {
+  if (!ptr) {
+    return -1;
+  }
+  
   // look up ptr size
-  blkhead *h = ptr - sizeof(blkhead);
-  if(h->bh_magic != MAGIC) {
+  blkhead_t *h = ptr - sizeof(blkhead_t);
+  if (h->bh_magic != MAGIC) {
     fprintf(stderr, "memory boundaries corrupted\n");
     return -1;
   }
-  blklarge *bl = find_owning_block(ptr);
-  if(!bl) {
-    return -1;
-  }
 
-  // if the next field of blklarge is immediatly after
-  // then just decrement next by size
-  if(last_allocated(bl, h)) {
-    return 0;
-  }
+  // place h at front of free list
+  blist->b_holes = blksmall_refurbish(h, blist->b_holes);
+  blist->b_numh++;
   
-  // add ptr address to freed
-  if(h->bh_size >= sizeof(blksmall)) {
-    blksmall *fptr = (blksmall *)h;
-    blksmall_init(h->bh_size, fptr);
-    fptr->bs_head.bh_magic = FREE_MAGIC;
-    if(!bl->bl_freed || h->bh_size < bl->bl_freed->bs_head.bh_size) {
-      bl->bl_fmin = h->bh_size;
-      if(!bl->bl_freed) {
-	bl->bl_fmin = h->bh_size / 2;
-	bl->bl_fmax = h->bh_size;
-      }
-      fptr->bs_next = bl->bl_freed;
-      bl->bl_freed = fptr;
-    } else {
-      blksmall *cur = bl->bl_freed;
-      while(cur->bs_next != NULL && h->bh_size > cur->bs_next->bs_head.bh_size) {
-	cur = cur->bs_next;
-      }
-      fptr->bs_next = cur->bs_next;
-      if(!fptr->bs_next) {
-	bl->bl_fmax = h->bh_size;
-      }
-      cur->bs_next = fptr;
-    }
-    
-    bl->bl_fsize += h->bh_size;
-    bl->bl_num_free++;
-  }
+  // maybe sort this?
+  
   return 0;
 }
 

@@ -46,6 +46,7 @@ test_count (int c)
     FREE(nums[i]);
   }
   printf("allocated and freed %d sub-blocks\n", c);
+  FREE(nums);
 }
 
 void
@@ -97,11 +98,11 @@ test_rand (char *name)
 int
 main (int argc, char *argv[])
 {
-  basic_test();
-  test_count(5000);
-  //test_count(10);
+  //basic_test();
+  test_count(50000);
+  test_count(10);
 
-  //char name[] = "test/r01.in";
+  char name[] = "test/r01.in";
   //gen_rand(name, 100, 50);
   //test_rand(name);
   

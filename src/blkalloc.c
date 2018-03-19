@@ -94,7 +94,7 @@ blksmall_init (size_b s, blksmall_t *next)
 void
 blksmall_free (blksmall_t *bs)
 {
-  BLK_FREE(bs->bs_head);
+  //BLK_FREE(bs->bs_head);
   BLK_FREE(bs);
 }
 
@@ -222,7 +222,16 @@ blklist_free (blklist_t *bls)
   for(int i = 0; i < bls->b_numb; i++) {
     free(blist->b_blocks[i]);
   }
-  BLK_FREE(bls->b_holes);
+
+  // free all blksmall_t structs
+  blksmall_t *bs = bls->b_holes;
+  while (bs) {
+    blksmall_t *next = bs->bs_next;
+    blksmall_free(bs);
+    bs = next;
+  }
+
+  // array not a linked list
   BLK_FREE(bls->b_blocks);
 }
 
@@ -244,8 +253,17 @@ blkalloc (size_b size)
   }
 
   // if larger than block size just mmap it
-  if (size >= BLOCK_SIZE + sizeof(blkhead_t)) {
-    return BLK_ALLOC(size);
+  if (size + sizeof(blkhead_t) >= BLOCK_SIZE) {
+    // make a header for it so we know how to free it
+    void *ret = BLK_ALLOC(size + sizeof(blkhead_t));
+    blkhead_init(ret, size);
+    return ret + sizeof(blkhead_t);
+  }
+
+  // if we are out of available memory buckets
+  if (!blist->b_holes) {
+    // make new block if needed
+    blklist_addblock(blist);    
   }
   
   // search for first block available
@@ -267,8 +285,6 @@ blkalloc (size_b size)
     bs = bs->bs_next;
   }
 
-  // make new block if needed
-  blklist_addblock(blist);
   // new block is first in list so break it if needed
   return blksmall_get_base(blist->b_holes, size);
 }
@@ -291,8 +307,16 @@ blkfree (void *ptr)
   // look up ptr size
   blkhead_t *h = ptr - sizeof(blkhead_t);
   if (h->bh_magic != MAGIC) {
-    fprintf(stderr, "memory boundaries corrupted\n");
+    fprintf(stderr, "Memory boundaries corrupted\n");
+    fprintf(stderr, "(or pointer is from a different allocator)\n");
     return -1;
+  }
+
+  // if h's size is too large then we must have
+  // allocating using the std method
+  if (h->bh_size + sizeof(blkhead_t) > BLOCK_SIZE) {
+    BLK_FREE(h);
+    return 0;
   }
 
   // place h at front of free list

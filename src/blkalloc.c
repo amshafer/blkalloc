@@ -16,26 +16,22 @@
 
 #include "blkalloc.h"
 
+// NOTATION: a memory 'bucket' is a hole or zombie 
+// holes are available memory buckets
+
 /*
  * data header for allocations. holds the size
  * of the individual allocation
  * magic will be MAGIC if allocated or FREE_MAGIC
  * if freed
  */
-typedef struct {
+struct blkhead_tag {
   size_b bh_magic;             // magic number
   size_b bh_size;              // the size of the sub-block
-} blkhead_t;
-  
-// struct for an smaller sub-block
-// for freed pointers in blklarge
-struct blksmall_tag {
-  blkhead_t *bs_head;             // the sub-block info
-  struct blksmall_tag *bs_next;  // next sub-block in LL
+  struct blkhead_tag *bh_next; // the next memory bucket
 };
 
-typedef struct blksmall_tag blksmall_t;
-
+typedef struct blkhead_tag blkhead_t;
 
 /*
  * the struct holding all large blocks
@@ -45,9 +41,8 @@ typedef struct blksmall_tag blksmall_t;
 struct blklist_tag {
   unsigned int b_numh;        // number of holes
   unsigned int b_numb;        // number of blocks
-  blksmall_t *b_holes;        // free blocks linked list
-  void **b_blocks;            // freeable unsplit blocks
-  blksmall_t *b_zombies;      // empty blksmall object storage
+  blkhead_t *b_blocks;        // mmaped blocks that need freeing
+  blkhead_t *b_holes;         // free blocks linked list
 };
 
 // global block list
@@ -59,62 +54,11 @@ blklist_t *blist;
  * @param the size of the block
  */
 void
-blkhead_init (blkhead_t *bh, size_b s)
+blkhead_init (blkhead_t *bh, size_b s, blkhead_t *next)
 {
   bh->bh_magic = MAGIC;
   bh->bh_size = s;
-}
-
-/*
- * creates a sub-block free representation
- * @param s the size of the block
- * @param f the position to be freed
- */
-blksmall_t *
-blksmall_init (size_b s, blksmall_t *next)
-{
-  blksmall_t *bs = BLK_ALLOC(sizeof(blksmall_t));
-
-  if (s != 0) {
-    bs->bs_head = BLK_ALLOC(sizeof(blkhead_t) + BLOCK_SIZE);
-    blkhead_init(bs->bs_head, s);
-  } else {
-    bs->bs_head = NULL;
-  }
-  
-  bs->bs_next = next;
-
-  return bs;
-}
-
-/*
- * frees a blksmall struct
- * @param bs the struct to free
- */
-void
-blksmall_free (blksmall_t *bs)
-{
-  //BLK_FREE(bs->bs_head);
-  BLK_FREE(bs);
-}
-
-/*
- * creates a sub-block free representation
- * @param head pointer to the head data to use
- * @param next the next block in the list
- * @return a blksmall off of the zombie pile
- */
-blksmall_t *
-blksmall_refurbish (blkhead_t *head, blksmall_t *next)
-{
-  // get a free small block struct
-  blksmall_t *ret = blist->b_zombies;
-  blist->b_zombies = ret->bs_next;
-
-  ret->bs_head = head;
-  ret->bs_next = next;
-
-  return ret;
+  bh->bh_next = next;
 }
 
 /*
@@ -127,26 +71,24 @@ blksmall_refurbish (blkhead_t *head, blksmall_t *next)
  * @param size the size of the requested allocation
  */
 void
-blksmall_break (blksmall_t *bs, size_b size)
+blkhead_break (blkhead_t *bh, size_b size)
 {
-  if (bs->bs_head->bh_size - size <= BLOCK_MIN) {
+  // don't split if block would be too small
+  if (bh->bh_size - size <= BLOCK_MIN) {
     return;
   }
 
   // create new block header
-  void *new_block = (void *)bs->bs_head + sizeof(blkhead_t) + size;
+  void *new_block = (void *)bh + sizeof(blkhead_t) + size;
   blkhead_t *h = (blkhead_t *)new_block;
-  blkhead_init(h, bs->bs_head->bh_size - sizeof(blkhead_t) - size);
 
-  // create new holen
-  blksmall_t *new = blksmall_init(0, blist->b_holes);
-  new->bs_head = h;
-  blist->b_holes = new;
-
-  // fix old hole size
-  bs->bs_head->bh_size = size;
-
+  // add new split block to holes
+  blkhead_init(h, bh->bh_size - sizeof(blkhead_t) - size, blist->b_holes);
+  blist->b_holes = h;
   blist->b_numh++;
+
+  // fix old hole size after breaking
+  bh->bh_size = size;
 }
 
 
@@ -158,16 +100,28 @@ blksmall_break (blksmall_t *bs, size_b size)
  * @return a pointer to the allocated data
  */
 void *
-blksmall_get_base (blksmall_t *bs, size_b size)
+blkhead_get_base (blkhead_t *bh, size_b size)
 {
-  void *ret = bs->bs_head;
-  blksmall_break(bs, size);
-
-  // add to pile of zombies
-  bs->bs_next = blist->b_zombies;
-  blist->b_zombies = bs;
+  void *ret = bh;
+  blkhead_break(bh, size);
 
   return ret + sizeof(blkhead_t);
+}
+
+/*
+ * adds a new BLOCK_SIZE hole to the blklist
+ * @param bl the blklist to add to
+ */ 
+void
+blklist_addblock (blklist_t *bl)
+{
+  void *new_block = BLK_ALLOC(BLOCK_SIZE + sizeof(blkhead_t) * 2);
+  // add malloc'd to b_blocks
+  blkhead_init(new_block, BLOCK_SIZE + sizeof(blkhead_t), bl->b_blocks);
+  bl->b_blocks = (blkhead_t *)new_block;
+  // add BLOCK_SIZE section to b_holes
+  blkhead_init(new_block + sizeof(blkhead_t), BLOCK_SIZE, bl->b_holes);
+  bl->b_holes = (blkhead_t *)(new_block + sizeof(blkhead_t));
 }
 
 /*
@@ -182,33 +136,13 @@ blklist_init ()
 
   // create all starting blocks
   bl->b_numh = BLOCK_NUM;
-  bl->b_numb = BLOCK_NUM;
-  bl->b_holes = blksmall_init(BLOCK_SIZE, NULL);
-  bl->b_zombies = NULL;
+  bl->b_numb = BLOCK_NUM;  
+  bl->b_holes = bl->b_blocks = NULL;
 
-  // blocks holds malloc'd blocks
-  bl->b_blocks = BLK_ALLOC(sizeof(void *) * BLOCK_NUM);
-  bl->b_blocks[0] = (void *)(bl->b_holes->bs_head);
-  
-  blksmall_t *cur = bl->b_holes;
-  for (int i = 1; i < BLOCK_NUM; i++) {
-    cur->bs_next = blksmall_init(BLOCK_SIZE, NULL);
-    cur = cur->bs_next;
-    bl->b_blocks[i] = (void *)cur->bs_next->bs_head;
-  }
+  // b_blocks holds malloc'd blocks
+  blklist_addblock(bl);
 
   return bl;
-}
-
-/*
- * adds a block to the blist
- * resizes the blockp array if needed
- */
-void
-blklist_addblock (blklist_t *bl)
-{
-  blksmall_t *new = blksmall_init(BLOCK_SIZE, bl->b_holes);
-  bl->b_holes = new;
 }
 
 /*
@@ -219,22 +153,13 @@ blklist_addblock (blklist_t *bl)
 void
 blklist_free (blklist_t *bls)
 {
-  for(int i = 0; i < bls->b_numb; i++) {
-    free(blist->b_blocks[i]);
+  blkhead_t *b = bls->b_blocks;
+  while (b) {
+    blkhead_t *next = b->bh_next;
+    free(b);
+    b = next;
   }
-
-  // free all blksmall_t structs
-  blksmall_t *bs = bls->b_holes;
-  while (bs) {
-    blksmall_t *next = bs->bs_next;
-    blksmall_free(bs);
-    bs = next;
-  }
-
-  // array not a linked list
-  BLK_FREE(bls->b_blocks);
 }
-
 
 /*
  * the block allocation call
@@ -256,7 +181,7 @@ blkalloc (size_b size)
   if (size + sizeof(blkhead_t) >= BLOCK_SIZE) {
     // make a header for it so we know how to free it
     void *ret = BLK_ALLOC(size + sizeof(blkhead_t));
-    blkhead_init(ret, size);
+    blkhead_init(ret, size, NULL);
     return ret + sizeof(blkhead_t);
   }
 
@@ -267,28 +192,39 @@ blkalloc (size_b size)
   }
   
   // search for first block available
-  blksmall_t *bs = blist->b_holes;
-  if (bs->bs_head->bh_size > size) {
-    blist->b_holes = bs->bs_next;
-    blist->b_numh--;
-    return blksmall_get_base(bs, size);
-  }
-
-  while (bs->bs_next) { 
-    if (bs->bs_next->bs_head->bh_size > size) {
-      blksmall_t *ret = bs->bs_next;
-      bs->bs_next = ret->bs_next;
+  blkhead_t *bh = blist->b_holes;
+  while (bh) { 
+    if (bh->bh_size > size) {
+      // remove from holes
+      blist->b_holes = bh->bh_next;
+      bh->bh_next = NULL;
       blist->b_numh--;
-      return blksmall_get_base(ret, size);
+
+      return blkhead_get_base(bh, size);
     }
     
-    bs = bs->bs_next;
+    bh = bh->bh_next;
   }
 
   // new block is first in list so break it if needed
-  return blksmall_get_base(blist->b_holes, size);
+  return blkhead_get_base(blist->b_holes, size);
 }
 
+/*
+ * the block callocation call
+ * same as blkalloc but zero's the 
+ * allocated memory
+ * 
+ * @param size the size of the allocated
+ * @return a pointer to the available memory in a block
+ */
+void * 
+blkcalloc (size_b size)
+{
+  void *ret = blkalloc(size);
+  memset(ret, 0, size);
+  return ret;
+}
 
 /*
  * the free allocated call
@@ -301,14 +237,16 @@ int
 blkfree (void *ptr)
 {
   if (!ptr) {
+    fprintf(stderr, "blkalloc: attempting to free a null pointer\n");
+    fprintf(stderr, "blkalloc: (ignoring null pointer free)\n");
     return -1;
   }
   
   // look up ptr size
   blkhead_t *h = ptr - sizeof(blkhead_t);
   if (h->bh_magic != MAGIC) {
-    fprintf(stderr, "Memory boundaries corrupted\n");
-    fprintf(stderr, "(or pointer is from a different allocator)\n");
+    fprintf(stderr, "blkalloc: Memory boundaries corrupted\n");
+    fprintf(stderr, "blkalloc: (or pointer is from a different allocator)\n");
     return -1;
   }
 
@@ -320,7 +258,8 @@ blkfree (void *ptr)
   }
 
   // place h at front of free list
-  blist->b_holes = blksmall_refurbish(h, blist->b_holes);
+  h->bh_next = blist->b_holes;
+  blist->b_holes = h;
   blist->b_numh++;
   
   // maybe sort this?

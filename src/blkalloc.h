@@ -52,6 +52,16 @@ typedef unsigned int size_b;
 void * blkalloc (size_b size);
 
 /*
+ * the block callocation call
+ * same as blkalloc but zero's the 
+ * allocated memory
+ * 
+ * @param size the size of the allocated
+ * @return a pointer to the available memory in a block
+ */
+void * blkcalloc (size_b size);
+
+/*
  * the free allocated call
  * used to free INDIVIDUAL allocations 
  * NOT entire blocks

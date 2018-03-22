@@ -11,6 +11,7 @@
 #include "../src/blkalloc.h"
 
 #define ALLOCATOR( s ) blkalloc( (s) )
+#define CALLOCATOR( s ) blkcalloc( (s) )
 #define FREE( p ) blkfree( (p) )
 
 void
@@ -78,18 +79,20 @@ test_rand (char *name)
 {
   FILE *fp = fopen(name, "r");
   int n, s = 0;
-  char *on[s];
   fscanf(fp, "%d %d", &n, &s);
+  char **on = CALLOCATOR(sizeof(char *) * s);
 
   for(int i = 0; i < n; i++) {
     char c = fgetc(fp);
     if(c == 'a') {
       int slot, size = 0;
       fscanf(fp, "%d %d", &slot, &size);
+      printf("Allocating bucket of size %d\n", size);
       on[slot] = ALLOCATOR(size);
     } else if(c == 'f') {
       int slot = 0;
       fscanf(fp, "%d", &slot);
+      printf("Freeing slot %d\n", slot);
       FREE(on[slot]);
     }
   }
@@ -104,7 +107,7 @@ main (int argc, char *argv[])
 
   char name[] = "test/r01.in";
   //gen_rand(name, 100, 50);
-  //test_rand(name);
+  test_rand(name);
   
   blkfree_all();
   return 0;

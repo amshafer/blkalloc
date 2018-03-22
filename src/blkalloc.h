@@ -49,7 +49,7 @@ typedef unsigned int size_b;
  * @param size the size of the allocated
  * @return a pointer to the available memory in a block
  */
-void * blkalloc (size_b size);
+void * blkalloc (size_t size);
 
 /*
  * the block callocation call
@@ -59,7 +59,7 @@ void * blkalloc (size_b size);
  * @param size the size of the allocated
  * @return a pointer to the available memory in a block
  */
-void * blkcalloc (size_b size);
+void * blkcalloc (size_t number, size_t size);
 
 /*
  * the free allocated call

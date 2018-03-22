@@ -159,6 +159,7 @@ blklist_free (blklist_t *bls)
     free(b);
     b = next;
   }
+  BLK_FREE(bls);
 }
 
 /*
@@ -170,7 +171,7 @@ blklist_free (blklist_t *bls)
  * @return a pointer to the available memory in a block
  */
 void *
-blkalloc (size_b size)
+blkalloc (size_t size)
 {
   // initilize if neededp
   if (!blist) {
@@ -219,10 +220,10 @@ blkalloc (size_b size)
  * @return a pointer to the available memory in a block
  */
 void * 
-blkcalloc (size_b size)
+blkcalloc (size_t number, size_t size)
 {
-  void *ret = blkalloc(size);
-  memset(ret, 0, size);
+  void *ret = blkalloc(size * number);
+  memset(ret, 0, size * number);
   return ret;
 }
 

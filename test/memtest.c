@@ -11,7 +11,7 @@
 #include "../src/blkalloc.h"
 
 #define ALLOCATOR( s ) blkalloc( (s) )
-#define CALLOCATOR( s ) blkcalloc( (s) )
+#define CALLOCATOR( s ) blkcalloc( 1, (s) )
 #define FREE( p ) blkfree( (p) )
 
 void
@@ -87,15 +87,23 @@ test_rand (char *name)
     if(c == 'a') {
       int slot, size = 0;
       fscanf(fp, "%d %d", &slot, &size);
-      printf("Allocating bucket of size %d\n", size);
-      on[slot] = ALLOCATOR(size);
+      if (on[slot] == NULL) {
+	printf("Allocating bucket of size %d\n", size);
+	on[slot] = ALLOCATOR(size);
+      }
     } else if(c == 'f') {
       int slot = 0;
       fscanf(fp, "%d", &slot);
       printf("Freeing slot %d\n", slot);
       FREE(on[slot]);
+      on[slot] = NULL;
     }
   }
+
+  for (int i = 0; i < s; i++) {
+    FREE(on[i]);
+  }
+  FREE(on);
 }
 
 int
